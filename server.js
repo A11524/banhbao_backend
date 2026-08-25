@@ -199,7 +199,7 @@ app.post('/api/orders', async (req, res) => {
             if (deductAmount === 1.0) {
                 if (pName.includes('yaourt') || pName.includes('sữa chua') || pName.includes('yaua')) {
                     deduction_qty = item.quantity * 3.0;
-                } else if (pName.includes('bơ')) {
+                } else if (pName.includes('bơ') || pName.includes('táo')) {
                     deduction_qty = item.quantity * 0.2;
                 } else if (pName.includes('cacao')) {
                     deduction_qty = item.quantity * 0.02; 
