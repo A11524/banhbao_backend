@@ -6,17 +6,11 @@ const { Server } = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-// Cấu hình Socket.IO cho phép kết nối từ mọi nguồn (CORS)
 const io = new Server(server, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
-    }
+    cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
 const PORT = process.env.PORT || 3000;
-
-// Middleware
 app.use(cors());
 app.use(express.json());
 
@@ -26,10 +20,7 @@ const dbConfig = {
     user: '3FhqEDAz7EKSUQy.root',                            
     password: 'BHHWN0HDRgNRw3uS',                       
     database: 'icecream_pos',
-    ssl: {
-        minVersion: 'TLSv1.2',
-        rejectUnauthorized: true
-    }
+    ssl: { minVersion: 'TLSv1.2', rejectUnauthorized: true }
 };
 
 let pool;
@@ -37,17 +28,13 @@ let pool;
 async function initDB() {
     try {
         const connection = await mysql.createConnection({ 
-            host: dbConfig.host, 
-            user: dbConfig.user, 
-            password: dbConfig.password,
-            ssl: dbConfig.ssl 
+            host: dbConfig.host, user: dbConfig.user, password: dbConfig.password, ssl: dbConfig.ssl 
         });
         await connection.query(`CREATE DATABASE IF NOT EXISTS \`${dbConfig.database}\`;`);
         await connection.end();
 
         pool = mysql.createPool(dbConfig);
 
-        // 1. Khởi tạo các bảng chính (Thêm giá cho mức 2, 3, 4 viên)
         await pool.query(`
             CREATE TABLE IF NOT EXISTS products (
                 id VARCHAR(50) PRIMARY KEY,
@@ -57,36 +44,28 @@ async function initDB() {
                 stock DECIMAL(10,3) DEFAULT 0,
                 price_2 INT DEFAULT 0,
                 price_3 INT DEFAULT 0,
-                price_4 INT DEFAULT 0
+                price_4 INT DEFAULT 0,
+                deduct_per_serve DECIMAL(10,3) DEFAULT 1.0
             );
         `);
 
-        // Cập nhật cấu trúc nếu bảng đã tồn tại
         try { await pool.query(`ALTER TABLE products MODIFY COLUMN stock DECIMAL(10,3) DEFAULT 0;`); } catch (e) {}
+        try { await pool.query(`ALTER TABLE products ADD COLUMN price_2 INT DEFAULT 0, ADD COLUMN price_3 INT DEFAULT 0, ADD COLUMN price_4 INT DEFAULT 0;`); } catch (e) {}
         try { 
-            await pool.query(`ALTER TABLE products ADD COLUMN price_2 INT DEFAULT 0, ADD COLUMN price_3 INT DEFAULT 0, ADD COLUMN price_4 INT DEFAULT 0;`); 
-            console.log("🛠️ Đã cập nhật cột giá nhiều viên vào bảng products.");
+            await pool.query(`ALTER TABLE products ADD COLUMN deduct_per_serve DECIMAL(10,3) DEFAULT 1.0;`); 
+            console.log("🛠️ Đã cập nhật cột định mức trừ kho (deduct_per_serve).");
         } catch (e) {}
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS orders (
-                id VARCHAR(50) PRIMARY KEY,
-                total_amount INT NOT NULL,
-                payment_method VARCHAR(50) NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                id VARCHAR(50) PRIMARY KEY, total_amount INT NOT NULL, payment_method VARCHAR(50) NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         `);
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS order_details (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                order_id VARCHAR(50),
-                product_id VARCHAR(50),
-                quantity INT NOT NULL,
-                unit_price INT NOT NULL,
-                deduct_weight DECIMAL(10,3) DEFAULT 0,
-                FOREIGN KEY (order_id) REFERENCES orders(id),
-                FOREIGN KEY (product_id) REFERENCES products(id)
+                id INT AUTO_INCREMENT PRIMARY KEY, order_id VARCHAR(50), product_id VARCHAR(50), quantity INT NOT NULL, unit_price INT NOT NULL, deduct_weight DECIMAL(10,3) DEFAULT 0,
+                FOREIGN KEY (order_id) REFERENCES orders(id), FOREIGN KEY (product_id) REFERENCES products(id)
             );
         `);
 
@@ -94,111 +73,77 @@ async function initDB() {
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS audit_logs (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                table_name VARCHAR(50) NOT NULL,
-                record_id VARCHAR(50) NOT NULL,
-                action VARCHAR(20) NOT NULL,
-                old_data JSON,
-                new_data JSON,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                id INT AUTO_INCREMENT PRIMARY KEY, table_name VARCHAR(50) NOT NULL, record_id VARCHAR(50) NOT NULL, action VARCHAR(20) NOT NULL, old_data JSON, new_data JSON, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         `);
 
         await pool.query(`
-            CREATE TABLE IF NOT EXISTS users (
-                username VARCHAR(50) PRIMARY KEY,
-                password VARCHAR(255) NOT NULL,
-                role VARCHAR(20) NOT NULL
-            );
+            CREATE TABLE IF NOT EXISTS users (username VARCHAR(50) PRIMARY KEY, password VARCHAR(255) NOT NULL, role VARCHAR(20) NOT NULL);
         `);
 
         const [users] = await pool.query('SELECT * FROM users');
         if (users.length === 0) {
-            await pool.query(`
-                INSERT INTO users (username, password, role) VALUES 
-                ('chuquan', 'chuquan', 'owner'),
-                ('admin', 'admin', 'admin'),
-                ('nhanvien', '123', 'staff')
-            `);
+            await pool.query(`INSERT INTO users (username, password, role) VALUES ('chuquan', 'chuquan', 'owner'), ('admin', 'admin', 'admin'), ('nhanvien', '123', 'staff')`);
         }
-
-        console.log("✅ Database và các Bảng đã sẵn sàng (Đã cấu hình chuẩn TiDB)!");
-    } catch (error) {
-        console.error("❌ Lỗi DB:", error);
-    }
+        console.log("✅ Database đã sẵn sàng!");
+    } catch (error) { console.error("❌ Lỗi DB:", error); }
 }
 
 io.on('connection', (socket) => {
-    console.log('⚡ Một client vừa kết nối:', socket.id);
-    socket.on('disconnect', () => {
-        console.log('🔥 Một client đã ngắt kết nối:', socket.id);
-    });
+    console.log('⚡ Client kết nối:', socket.id);
+    socket.on('disconnect', () => { console.log('🔥 Client ngắt kết nối:', socket.id); });
 });
 
 app.get('/api/products', async (req, res) => {
     try {
         const [rows] = await pool.query('SELECT * FROM products');
         res.json(rows);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+    } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.post('/api/products', async (req, res) => {
-    // Nhận thêm các mức giá phụ
-    const { id, name, price, category, stock, price_2, price_3, price_4 } = req.body;
+    const { id, name, price, category, stock, price_2, price_3, price_4, deduct_per_serve } = req.body;
     const currentStock = stock || 0;
     try {
-        await pool.query('INSERT INTO products (id, name, price, category, stock, price_2, price_3, price_4) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', 
-            [id, name, price, category, currentStock, price_2 || 0, price_3 || 0, price_4 || 0]);
+        await pool.query('INSERT INTO products (id, name, price, category, stock, price_2, price_3, price_4, deduct_per_serve) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', 
+            [id, name, price, category, currentStock, price_2 || 0, price_3 || 0, price_4 || 0, deduct_per_serve || 1.0]);
             
         await pool.query(`INSERT INTO audit_logs (table_name, record_id, action, old_data, new_data) VALUES (?, ?, ?, ?, ?)`, 
-            ['products', id, 'INSERT', null, JSON.stringify({ name, price, stock: currentStock, price_2, price_3, price_4 })]);
+            ['products', id, 'INSERT', null, JSON.stringify({ name, price, stock: currentStock, deduct_per_serve })]);
 
         io.emit('products_updated');
         res.status(201).json({ message: 'Đã thêm món!' });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+    } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.put('/api/products/:id', async (req, res) => {
-    const { name, price, stock, price_2, price_3, price_4 } = req.body;
+    const { name, price, stock, price_2, price_3, price_4, deduct_per_serve } = req.body;
     const { id } = req.params;
     try {
         const [oldRows] = await pool.query('SELECT * FROM products WHERE id = ?', [id]);
         if (oldRows.length === 0) return res.status(404).json({ message: 'Không tìm thấy sản phẩm' });
-        const oldData = oldRows[0];
-
-        let updates = [];
-        let params = [];
-
+        
+        let updates = []; let params = [];
         if (name !== undefined) { updates.push('name = ?'); params.push(name); }
         if (price !== undefined) { updates.push('price = ?'); params.push(price); }
         if (stock !== undefined) { updates.push('stock = ?'); params.push(stock); }
         if (price_2 !== undefined) { updates.push('price_2 = ?'); params.push(price_2); }
         if (price_3 !== undefined) { updates.push('price_3 = ?'); params.push(price_3); }
         if (price_4 !== undefined) { updates.push('price_4 = ?'); params.push(price_4); }
+        if (deduct_per_serve !== undefined) { updates.push('deduct_per_serve = ?'); params.push(deduct_per_serve); }
 
-        if (updates.length === 0) {
-            return res.status(400).json({ message: 'Không có dữ liệu để cập nhật' });
-        }
-
+        if (updates.length === 0) return res.status(400).json({ message: 'Không có dữ liệu cập nhật' });
         params.push(id);
         
         await pool.query(`UPDATE products SET ${updates.join(', ')} WHERE id = ?`, params);
-        
         const [newRows] = await pool.query('SELECT * FROM products WHERE id = ?', [id]);
-        const newData = newRows[0];
 
         await pool.query(`INSERT INTO audit_logs (table_name, record_id, action, old_data, new_data) VALUES (?, ?, ?, ?, ?)`, 
-            ['products', id, 'UPDATE', JSON.stringify(oldData), JSON.stringify(newData)]);
+            ['products', id, 'UPDATE', JSON.stringify(oldRows[0]), JSON.stringify(newRows[0])]);
 
         io.emit('products_updated');
         res.json({ message: 'Đã cập nhật thông tin món!' });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+    } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.delete('/api/products/:id', async (req, res) => {
@@ -206,24 +151,18 @@ app.delete('/api/products/:id', async (req, res) => {
     const connection = await pool.getConnection(); 
     try {
         const [oldRows] = await connection.query('SELECT * FROM products WHERE id = ?', [id]);
-        const oldData = oldRows.length > 0 ? oldRows[0] : null;
-
         await connection.query('SET FOREIGN_KEY_CHECKS=0;');
         await connection.query('DELETE FROM products WHERE id = ?', [id]);
         await connection.query('SET FOREIGN_KEY_CHECKS=1;'); 
         
-        if (oldData) {
+        if (oldRows.length > 0) {
             await connection.query(`INSERT INTO audit_logs (table_name, record_id, action, old_data, new_data) VALUES (?, ?, ?, ?, ?)`, 
-                ['products', id, 'DELETE', JSON.stringify(oldData), null]);
+                ['products', id, 'DELETE', JSON.stringify(oldRows[0]), null]);
         }
-
         connection.release();
         io.emit('products_updated');
         res.json({ message: 'Đã xóa món!' });
-    } catch (error) {
-        if (connection) connection.release();
-        res.status(500).json({ error: error.message });
-    }
+    } catch (error) { if (connection) connection.release(); res.status(500).json({ error: error.message }); }
 });
 
 app.post('/api/orders', async (req, res) => {
@@ -244,23 +183,35 @@ app.post('/api/orders', async (req, res) => {
                 [id, item.product.id, item.quantity, item.product.price, item.deduct_weight || 0]
             );
 
-            let deduction_qty = item.quantity;
-            const pName = (item.product.name || '').toLowerCase(); 
+            // Kiểm tra db để lấy định mức trừ kho
+            const [pRows] = await connection.query('SELECT name, deduct_per_serve FROM products WHERE id = ?', [item.product.id]);
+            let pName = (item.product.name || '').toLowerCase();
+            let deductAmount = 1.0;
 
-            if (pName.includes('kem') && item.deduct_weight > 0) {
-                deduction_qty = item.quantity * item.deduct_weight;
-            } else if (pName.includes('yaourt') || pName.includes('sữa chua') || pName.includes('yaua')) {
-                deduction_qty = item.quantity * 3.0;
-            } else if (pName.includes('bơ')) {
-                deduction_qty = item.quantity * 0.2;
-            } else if (pName.includes('cacao')) {
-                deduction_qty = item.quantity * 0.02; 
+            if (pRows.length > 0) {
+                pName = (pRows[0].name || '').toLowerCase();
+                deductAmount = parseFloat(pRows[0].deduct_per_serve) || 1.0;
             }
 
-            await connection.query(
-                'UPDATE products SET stock = stock - ? WHERE id = ?',
-                [deduction_qty, item.product.id]
-            );
+            let deduction_qty = item.quantity * deductAmount;
+
+            // Logic Fallback dự phòng cho Yaourt/Bơ (Nếu người dùng chưa chỉnh định mức)
+            if (deductAmount === 1.0) {
+                if (pName.includes('yaourt') || pName.includes('sữa chua') || pName.includes('yaua')) {
+                    deduction_qty = item.quantity * 3.0;
+                } else if (pName.includes('bơ')) {
+                    deduction_qty = item.quantity * 0.2;
+                } else if (pName.includes('cacao')) {
+                    deduction_qty = item.quantity * 0.02; 
+                }
+            }
+
+            // Kem luôn trừ theo mức chia viên
+            if (pName.includes('kem') && item.deduct_weight > 0) {
+                deduction_qty = item.quantity * item.deduct_weight;
+            }
+
+            await connection.query('UPDATE products SET stock = stock - ? WHERE id = ?', [deduction_qty, item.product.id]);
         }
 
         await connection.commit();
@@ -270,9 +221,7 @@ app.post('/api/orders', async (req, res) => {
     } catch (error) {
         await connection.rollback();
         res.status(500).json({ error: error.message });
-    } finally {
-        connection.release();
-    }
+    } finally { connection.release(); }
 });
 
 app.get('/api/audit-logs', async (req, res) => {
@@ -280,44 +229,26 @@ app.get('/api/audit-logs', async (req, res) => {
         const { date } = req.query; 
         let query = 'SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 50';
         let params = [];
-        if (date) {
-            query = 'SELECT * FROM audit_logs WHERE DATE(created_at) = ? ORDER BY created_at DESC';
-            params.push(date);
-        }
+        if (date) { query = 'SELECT * FROM audit_logs WHERE DATE(created_at) = ? ORDER BY created_at DESC'; params.push(date); }
         const [rows] = await pool.query(query, params);
-        const formattedLogs = rows.map(log => ({
-            ...log,
-            old_data: typeof log.old_data === 'string' ? JSON.parse(log.old_data) : log.old_data,
-            new_data: typeof log.new_data === 'string' ? JSON.parse(log.new_data) : log.new_data
-        }));
-        res.json(formattedLogs);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+        res.json(rows);
+    } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.get('/api/orders/dashboard', async (req, res) => {
     try {
         const { days = 1 } = req.query; 
         const queryDays = parseInt(days);
-        let dateQuery = `DATE(created_at) >= CURDATE() - INTERVAL ${queryDays - 1} DAY`;
-        if (queryDays === 1) {
-             dateQuery = `DATE(created_at) = CURDATE()`;
-        }
-
+        let dateQuery = queryDays === 1 ? `DATE(created_at) = CURDATE()` : `DATE(created_at) >= CURDATE() - INTERVAL ${queryDays - 1} DAY`;
         const [orders] = await pool.query(`SELECT * FROM orders WHERE ${dateQuery} ORDER BY created_at DESC`);
         let totalRevenue = 0, cashRevenue = 0, transferRevenue = 0;
-
         orders.forEach(order => {
             totalRevenue += order.total_amount;
             if (order.payment_method === 'Tiền mặt') cashRevenue += order.total_amount;
             if (order.payment_method === 'Chuyển khoản') transferRevenue += order.total_amount;
         });
-
         res.json({ summary: { totalRevenue, cashRevenue, transferRevenue }, history: orders });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+    } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.post('/api/login', async (req, res) => {
@@ -326,9 +257,7 @@ app.post('/api/login', async (req, res) => {
         const [rows] = await pool.query('SELECT * FROM users WHERE username = ? AND password = ?', [username, password]);
         if (rows.length > 0) res.json({ success: true, role: rows[0].role });
         else res.status(401).json({ success: false, message: 'Sai thông tin đăng nhập' });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+    } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.put('/api/users/password', async (req, res) => {
@@ -336,12 +265,10 @@ app.put('/api/users/password', async (req, res) => {
     try {
         await pool.query('UPDATE users SET password = ? WHERE role = ?', [newPassword, targetRole]);
         res.json({ message: 'Cập nhật mật khẩu thành công!' });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+    } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 server.listen(PORT, async () => {
-    console.log(`🚀 Server (Socket.IO + API) đang chạy tại: http://localhost:${PORT}`);
+    console.log(`🚀 Server đang chạy tại: http://localhost:${PORT}`);
     await initDB();
 });
