@@ -237,18 +237,57 @@ app.get('/api/audit-logs', async (req, res) => {
 
 app.get('/api/orders/dashboard', async (req, res) => {
     try {
-        const { days = 1 } = req.query; 
-        const queryDays = parseInt(days);
-        let dateQuery = queryDays === 1 ? `DATE(created_at) = CURDATE()` : `DATE(created_at) >= CURDATE() - INTERVAL ${queryDays - 1} DAY`;
-        const [orders] = await pool.query(`SELECT * FROM orders WHERE ${dateQuery} ORDER BY created_at DESC`);
+        const { days, startDate, endDate } = req.query; 
+        let dateQuery = '';
+        let params = [];
+
+        // Hỗ trợ truy vấn theo khoảng ngày tùy chọn
+        if (startDate && endDate) {
+            dateQuery = `DATE(created_at) BETWEEN ? AND ?`;
+            params.push(startDate, endDate);
+        } else {
+            const queryDays = parseInt(days || 1);
+            dateQuery = queryDays === 1 ? `DATE(created_at) = CURDATE()` : `DATE(created_at) >= CURDATE() - INTERVAL ${queryDays - 1} DAY`;
+        }
+
+        const [orders] = await pool.query(`SELECT * FROM orders WHERE ${dateQuery} ORDER BY created_at DESC`, params);
+        
         let totalRevenue = 0, cashRevenue = 0, transferRevenue = 0;
-        orders.forEach(order => {
-            totalRevenue += order.total_amount;
-            if (order.payment_method === 'Tiền mặt') cashRevenue += order.total_amount;
-            if (order.payment_method === 'Chuyển khoản') transferRevenue += order.total_amount;
-        });
-        res.json({ summary: { totalRevenue, cashRevenue, transferRevenue }, history: orders });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+        let history = [];
+
+        if (orders.length > 0) {
+            // Lấy danh sách ID của các hóa đơn
+            const orderIds = orders.map(o => o.id);
+            
+            // Lấy chi tiết món ăn của tất cả các hóa đơn này (Dùng LEFT JOIN để phòng trường hợp món đã bị xóa khỏi kho)
+            const [details] = await pool.query(`
+                SELECT od.order_id, od.quantity, od.unit_price, p.name 
+                FROM order_details od
+                LEFT JOIN products p ON od.product_id = p.id
+                WHERE od.order_id IN (?)
+            `, [orderIds]);
+
+            // Ghép nối chi tiết món ăn vào từng hóa đơn
+            history = orders.map(order => {
+                totalRevenue += order.total_amount;
+                if (order.payment_method === 'Tiền mặt') cashRevenue += order.total_amount;
+                if (order.payment_method === 'Chuyển khoản') transferRevenue += order.total_amount;
+                
+                // Lọc ra các món thuộc về hóa đơn hiện tại
+                const items = details.filter(d => d.order_id === order.id).map(d => ({
+                    name: d.name || 'Món đã bị xóa',
+                    quantity: d.quantity,
+                    price: d.unit_price
+                }));
+                
+                return { ...order, items }; // Trả về hóa đơn kèm list món ăn
+            });
+        }
+
+        res.json({ summary: { totalRevenue, cashRevenue, transferRevenue }, history });
+    } catch (error) { 
+        res.status(500).json({ error: error.message }); 
+    }
 });
 
 app.post('/api/login', async (req, res) => {
