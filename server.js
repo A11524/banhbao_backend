@@ -229,7 +229,11 @@ app.get('/api/audit-logs', async (req, res) => {
         const { date } = req.query; 
         let query = 'SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 50';
         let params = [];
-        if (date) { query = 'SELECT * FROM audit_logs WHERE DATE(created_at) = ? ORDER BY created_at DESC'; params.push(date); }
+        if (date) { 
+            // Ép múi giờ: Cộng thêm 7 tiếng vào giờ UTC của Database trước khi so sánh ngày
+            query = 'SELECT * FROM audit_logs WHERE DATE(DATE_ADD(created_at, INTERVAL 7 HOUR)) = ? ORDER BY created_at DESC'; 
+            params.push(date); 
+        }
         const [rows] = await pool.query(query, params);
         res.json(rows);
     } catch (error) { res.status(500).json({ error: error.message }); }
@@ -241,50 +245,44 @@ app.get('/api/orders/dashboard', async (req, res) => {
         let dateQuery = '';
         let params = [];
 
-        // Hỗ trợ truy vấn theo khoảng ngày tùy chọn
+        // Ép thời gian truy vấn về múi giờ Việt Nam
         if (startDate && endDate) {
-            dateQuery = `DATE(created_at) BETWEEN ? AND ?`;
+            dateQuery = 'DATE(DATE_ADD(created_at, INTERVAL 7 HOUR)) >= ? AND DATE(DATE_ADD(created_at, INTERVAL 7 HOUR)) <= ?';
             params.push(startDate, endDate);
+        } else if (days) {
+            const queryDays = parseInt(days);
+            dateQuery = queryDays === 1 ? `DATE(DATE_ADD(created_at, INTERVAL 7 HOUR)) = CURDATE()` : `DATE(DATE_ADD(created_at, INTERVAL 7 HOUR)) >= CURDATE() - INTERVAL ${queryDays - 1} DAY`;
         } else {
-            const queryDays = parseInt(days || 1);
-            dateQuery = queryDays === 1 ? `DATE(created_at) = CURDATE()` : `DATE(created_at) >= CURDATE() - INTERVAL ${queryDays - 1} DAY`;
+            dateQuery = 'DATE(DATE_ADD(created_at, INTERVAL 7 HOUR)) = CURDATE()';
         }
 
         const [orders] = await pool.query(`SELECT * FROM orders WHERE ${dateQuery} ORDER BY created_at DESC`, params);
         
-        let totalRevenue = 0, cashRevenue = 0, transferRevenue = 0;
-        let history = [];
-
-        if (orders.length > 0) {
-            // Lấy danh sách ID của các hóa đơn
-            const orderIds = orders.map(o => o.id);
-            
-            // Lấy chi tiết món ăn của tất cả các hóa đơn này (Dùng LEFT JOIN để phòng trường hợp món đã bị xóa khỏi kho)
-            const [details] = await pool.query(`
+        let orderIds = orders.map(o => o.id);
+        let details = [];
+        if (orderIds.length > 0) {
+            const [rows] = await pool.query(`
                 SELECT od.order_id, od.quantity, od.unit_price, p.name 
-                FROM order_details od
-                LEFT JOIN products p ON od.product_id = p.id
+                FROM order_details od 
+                LEFT JOIN products p ON od.product_id = p.id 
                 WHERE od.order_id IN (?)
             `, [orderIds]);
-
-            // Ghép nối chi tiết món ăn vào từng hóa đơn
-            history = orders.map(order => {
-                totalRevenue += order.total_amount;
-                if (order.payment_method === 'Tiền mặt') cashRevenue += order.total_amount;
-                if (order.payment_method === 'Chuyển khoản') transferRevenue += order.total_amount;
-                
-                // Lọc ra các món thuộc về hóa đơn hiện tại
-                const items = details.filter(d => d.order_id === order.id).map(d => ({
-                    name: d.name || 'Món đã bị xóa',
-                    quantity: d.quantity,
-                    price: d.unit_price
-                }));
-                
-                return { ...order, items }; // Trả về hóa đơn kèm list món ăn
-            });
+            details = rows;
         }
 
-        res.json({ summary: { totalRevenue, cashRevenue, transferRevenue }, history });
+        const ordersWithDetails = orders.map(o => ({
+            ...o,
+            items: details.filter(d => d.order_id === o.id)
+        }));
+
+        let totalRevenue = 0, cashRevenue = 0, transferRevenue = 0;
+        orders.forEach(order => {
+            totalRevenue += order.total_amount;
+            if (order.payment_method === 'Tiền mặt') cashRevenue += order.total_amount;
+            if (order.payment_method === 'Chuyển khoản') transferRevenue += order.total_amount;
+        });
+
+        res.json({ summary: { totalRevenue, cashRevenue, transferRevenue }, history: ordersWithDetails });
     } catch (error) { 
         res.status(500).json({ error: error.message }); 
     }
