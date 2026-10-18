@@ -19,7 +19,7 @@ const dbConfig = {
     port: 4000,                                              
     user: '3FhqEDAz7EKSUQy.root',                            
     password: 'BHHWN0HDRgNRw3uS',                       
-    database: 'icecream_pos',
+    database: 'banhbao_pos',
     ssl: { minVersion: 'TLSv1.2', rejectUnauthorized: true }
 };
 
@@ -193,25 +193,16 @@ app.post('/api/orders', async (req, res) => {
                 deductAmount = parseFloat(pRows[0].deduct_per_serve) || 1.0;
             }
 
-            let deduction_qty = item.quantity * deductAmount;
-
-            // Logic Fallback dự phòng cho Yaourt/Bơ (Nếu người dùng chưa chỉnh định mức)
-            if (deductAmount === 1.0) {
-                if (pName.includes('yaourt') || pName.includes('sữa chua') || pName.includes('yaua')) {
-                    deduction_qty = item.quantity * 3.0;
-                } else if (pName.includes('bơ') || pName.includes('táo')) {
-                    deduction_qty = item.quantity * 0.2;
-                } else if (pName.includes('cacao')) {
-                    deduction_qty = item.quantity * 0.02; 
-                }
-            }
-
-            // Kem luôn trừ theo mức chia viên
-            if (pName.includes('kem') && item.deduct_weight > 0) {
+            // XÓA HẾT MẤY DÒNG IF...ELSE CHỨA CHỮ "kem", "yaourt", "bơ" ĐI.
+            // CHỈ GIỮ LẠI NHƯ NÀY:
+            let deduction_qty = item.quantity; 
+            if (item.deduct_weight > 0) {
                 deduction_qty = item.quantity * item.deduct_weight;
             }
-
-            await connection.query('UPDATE products SET stock = stock - ? WHERE id = ?', [deduction_qty, item.product.id]);
+            await connection.query(
+                'UPDATE products SET stock = stock - ? WHERE id = ?',
+                [deduction_qty, item.product.id]
+            );
         }
 
         await connection.commit();
