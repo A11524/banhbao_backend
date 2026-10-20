@@ -49,6 +49,15 @@ async function initDB() {
             );
         `);
 
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS expenses (
+                id VARCHAR(50) PRIMARY KEY,
+                description VARCHAR(255) NOT NULL,
+                amount INT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
         try { await pool.query(`ALTER TABLE products MODIFY COLUMN stock DECIMAL(10,3) DEFAULT 0;`); } catch (e) {}
         try { await pool.query(`ALTER TABLE products ADD COLUMN price_2 INT DEFAULT 0, ADD COLUMN price_3 INT DEFAULT 0, ADD COLUMN price_4 INT DEFAULT 0;`); } catch (e) {}
         try { 
@@ -294,6 +303,34 @@ app.put('/api/users/password', async (req, res) => {
         await pool.query('UPDATE users SET password = ? WHERE role = ?', [newPassword, targetRole]);
         res.json({ message: 'Cập nhật mật khẩu thành công!' });
     } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ================= API CHI PHÍ (EXPENSES) =================
+// 1. Lấy danh sách chi phí
+app.get('/api/expenses', async (req, res) => {
+  try {
+      // Đảm bảo lấy theo giờ VN nếu cần, nhưng tạm thời lưu trực tiếp
+      const [rows] = await pool.query('SELECT * FROM expenses ORDER BY created_at DESC');
+      res.json(rows);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// 2. Thêm phiếu chi mới
+app.post('/api/expenses', async (req, res) => {
+  try {
+      const { id, description, amount } = req.body;
+      const currentDateTime = new Date();
+      await pool.query('INSERT INTO expenses (id, description, amount, created_at) VALUES (?, ?, ?, ?)', [id, description, amount, currentDateTime]);
+      res.status(201).json({ message: "Thêm chi phí thành công" });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// 3. Xóa phiếu chi
+app.delete('/api/expenses/:id', async (req, res) => {
+  try {
+      await pool.query('DELETE FROM expenses WHERE id = ?', [req.params.id]);
+      res.json({ message: "Đã xóa chi phí" });
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 server.listen(PORT, async () => {
