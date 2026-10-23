@@ -42,12 +42,14 @@ async function initDB() {
                 price INT NOT NULL,
                 category VARCHAR(50) NOT NULL,
                 stock DECIMAL(10,3) DEFAULT 0,
+                master_stock DECIMAL(10,3) DEFAULT 0,
                 price_2 INT DEFAULT 0,
                 price_3 INT DEFAULT 0,
                 price_4 INT DEFAULT 0,
                 deduct_per_serve DECIMAL(10,3) DEFAULT 1.0
             );
         `);
+        try { await pool.query(`ALTER TABLE products ADD COLUMN master_stock DECIMAL(10,3) DEFAULT 0;`); } catch (e) {} // DÒNG MỚI THÊM
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS expenses (
@@ -111,14 +113,15 @@ app.get('/api/products', async (req, res) => {
 });
 
 app.post('/api/products', async (req, res) => {
-    const { id, name, price, category, stock, price_2, price_3, price_4, deduct_per_serve } = req.body;
+    const { id, name, price, category, stock, master_stock, price_2, price_3, price_4, deduct_per_serve } = req.body;
     const currentStock = stock || 0;
+    const mStock = master_stock || 0;
     try {
-        await pool.query('INSERT INTO products (id, name, price, category, stock, price_2, price_3, price_4, deduct_per_serve) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', 
-            [id, name, price, category, currentStock, price_2 || 0, price_3 || 0, price_4 || 0, deduct_per_serve || 1.0]);
+        await pool.query('INSERT INTO products (id, name, price, category, stock, master_stock, price_2, price_3, price_4, deduct_per_serve) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
+            [id, name, price, category, currentStock, mStock, price_2 || 0, price_3 || 0, price_4 || 0, deduct_per_serve || 1.0]);
             
         await pool.query(`INSERT INTO audit_logs (table_name, record_id, action, old_data, new_data) VALUES (?, ?, ?, ?, ?)`, 
-            ['products', id, 'INSERT', null, JSON.stringify({ name, price, stock: currentStock, deduct_per_serve })]);
+            ['products', id, 'INSERT', null, JSON.stringify({ name, price, stock: currentStock, master_stock: mStock })]);
 
         io.emit('products_updated');
         res.status(201).json({ message: 'Đã thêm món!' });
@@ -136,6 +139,7 @@ app.put('/api/products/:id', async (req, res) => {
         if (name !== undefined) { updates.push('name = ?'); params.push(name); }
         if (price !== undefined) { updates.push('price = ?'); params.push(price); }
         if (stock !== undefined) { updates.push('stock = ?'); params.push(stock); }
+        if (req.body.master_stock !== undefined) { updates.push('master_stock = ?'); params.push(req.body.master_stock); } // DÒNG MỚI THÊM
         if (price_2 !== undefined) { updates.push('price_2 = ?'); params.push(price_2); }
         if (price_3 !== undefined) { updates.push('price_3 = ?'); params.push(price_3); }
         if (price_4 !== undefined) { updates.push('price_4 = ?'); params.push(price_4); }
