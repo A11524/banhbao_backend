@@ -113,12 +113,12 @@ app.get('/api/products', async (req, res) => {
 });
 
 app.post('/api/products', async (req, res) => {
-    const { id, name, price, category, stock, master_stock, price_2, price_3, price_4, deduct_per_serve } = req.body;
+    const { id, name, price, category, stock, master_stock, price_2, price_3, price_4, display_order, deduct_per_serve } = req.body;
     const currentStock = stock || 0;
     const mStock = master_stock || 0;
     try {
-        await pool.query('INSERT INTO products (id, name, price, category, stock, master_stock, price_2, price_3, price_4, deduct_per_serve) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
-            [id, name, price, category, currentStock, mStock, price_2 || 0, price_3 || 0, price_4 || 0, deduct_per_serve || 1.0]);
+        await pool.query('INSERT INTO products (id, name, price, category, stock, master_stock, price_2, price_3, price_4, display_order, deduct_per_serve) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
+            [id, name, price, category, currentStock, mStock, price_2 || 0, price_3 || 0, price_4 || 0, display_order || 999, deduct_per_serve || 1.0]);
             
         await pool.query(`INSERT INTO audit_logs (table_name, record_id, action, old_data, new_data) VALUES (?, ?, ?, ?, ?)`, 
             ['products', id, 'INSERT', null, JSON.stringify({ name, price, stock: currentStock, master_stock: mStock })]);
@@ -143,6 +143,7 @@ app.put('/api/products/:id', async (req, res) => {
         if (price_2 !== undefined) { updates.push('price_2 = ?'); params.push(price_2); }
         if (price_3 !== undefined) { updates.push('price_3 = ?'); params.push(price_3); }
         if (price_4 !== undefined) { updates.push('price_4 = ?'); params.push(price_4); }
+        if (req.body.display_order !== undefined) { updates.push('display_order = ?'); params.push(req.body.display_order); }
         if (deduct_per_serve !== undefined) { updates.push('deduct_per_serve = ?'); params.push(deduct_per_serve); }
 
         if (updates.length === 0) return res.status(400).json({ message: 'Không có dữ liệu cập nhật' });
