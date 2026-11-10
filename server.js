@@ -363,21 +363,22 @@ app.get('/api/shifts', async (req, res) => {
 
 app.post('/api/shifts', async (req, res) => {
     const { date, shifts } = req.body;
-    // shifts là một mảng: [{shift_name, shift_time_range, float_amount, revenue_amount}, ...]
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
         for (const s of shifts) {
-            const id = `SH_${date}_${s.shift_name.replace(/\s+/g, '')}`; // Tạo ID giả
+            // Sửa lỗi ID: Dùng mã ca cố định (A, B, C) thay vì lấy Tên Ca dễ bị thay đổi
+            const id = `SH_${date}_${s.shift_key}`; 
             await connection.query(
                 `INSERT INTO shift_reports (id, report_date, shift_name, shift_time_range, float_amount, revenue_amount) 
                  VALUES (?, ?, ?, ?, ?, ?) 
                  ON DUPLICATE KEY UPDATE 
-                 shift_time_range = VALUES(shift_time_range), float_amount = VALUES(float_amount), revenue_amount = VALUES(revenue_amount)`,
+                 shift_name = VALUES(shift_name), shift_time_range = VALUES(shift_time_range), float_amount = VALUES(float_amount), revenue_amount = VALUES(revenue_amount)`,
                 [id, date, s.shift_name, s.shift_time_range, s.float_amount || 0, s.revenue_amount || 0]
             );
         }
         await connection.commit();
+        io.emit('shifts_updated'); // BẮN SỰ KIỆN: Báo cho màn hình nhân viên tải lại ngay lập tức
         res.status(200).json({ message: "Đã đồng bộ báo cáo ca thành công" });
     } catch (error) {
         await connection.rollback();
