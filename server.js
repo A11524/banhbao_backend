@@ -60,6 +60,19 @@ async function initDB() {
             );
         `);
 
+        await pool.query(`
+        CREATE TABLE IF NOT EXISTS shift_reports (
+            id VARCHAR(50) PRIMARY KEY,
+            report_date DATE NOT NULL,
+            shift_name VARCHAR(50) NOT NULL,
+            shift_time_range VARCHAR(50) NOT NULL,
+            float_amount INT DEFAULT 0,
+            revenue_amount INT DEFAULT 0,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_shift (report_date, shift_name)
+        );
+    `);
+
         try { await pool.query(`ALTER TABLE products MODIFY COLUMN stock DECIMAL(10,3) DEFAULT 0;`); } catch (e) {}
         try { await pool.query(`ALTER TABLE products ADD COLUMN price_2 INT DEFAULT 0, ADD COLUMN price_3 INT DEFAULT 0, ADD COLUMN price_4 INT DEFAULT 0;`); } catch (e) {}
         try { 
@@ -336,6 +349,42 @@ app.delete('/api/expenses/:id', async (req, res) => {
       await pool.query('DELETE FROM expenses WHERE id = ?', [req.params.id]);
       res.json({ message: "Đã xóa chi phí" });
   } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ================= API KẾT CA (BÀN GIAO) =================
+app.get('/api/shifts', async (req, res) => {
+    const { date } = req.query; // date có dạng YYYY-MM-DD
+    if (!date) return res.status(400).json({ error: 'Thiếu ngày' });
+    try {
+        const [rows] = await pool.query('SELECT * FROM shift_reports WHERE report_date = ?', [date]);
+        res.json(rows);
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/shifts', async (req, res) => {
+    const { date, shifts } = req.body;
+    // shifts là một mảng: [{shift_name, shift_time_range, float_amount, revenue_amount}, ...]
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        for (const s of shifts) {
+            const id = `SH_${date}_${s.shift_name.replace(/\s+/g, '')}`; // Tạo ID giả
+            await connection.query(
+                `INSERT INTO shift_reports (id, report_date, shift_name, shift_time_range, float_amount, revenue_amount) 
+                 VALUES (?, ?, ?, ?, ?, ?) 
+                 ON DUPLICATE KEY UPDATE 
+                 shift_time_range = VALUES(shift_time_range), float_amount = VALUES(float_amount), revenue_amount = VALUES(revenue_amount)`,
+                [id, date, s.shift_name, s.shift_time_range, s.float_amount || 0, s.revenue_amount || 0]
+            );
+        }
+        await connection.commit();
+        res.status(200).json({ message: "Đã đồng bộ báo cáo ca thành công" });
+    } catch (error) {
+        await connection.rollback();
+        res.status(500).json({ error: error.message });
+    } finally {
+        connection.release();
+    }
 });
 
 server.listen(PORT, async () => {
