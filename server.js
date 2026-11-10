@@ -61,17 +61,20 @@ async function initDB() {
         `);
 
         await pool.query(`
-        CREATE TABLE IF NOT EXISTS shift_reports (
-            id VARCHAR(50) PRIMARY KEY,
-            report_date DATE NOT NULL,
-            shift_name VARCHAR(50) NOT NULL,
-            shift_time_range VARCHAR(50) NOT NULL,
-            float_amount INT DEFAULT 0,
-            revenue_amount INT DEFAULT 0,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY unique_shift (report_date, shift_name)
-        );
-    `);
+    CREATE TABLE IF NOT EXISTS shift_reports (
+        id VARCHAR(50) PRIMARY KEY,
+        report_date DATE NOT NULL,
+        shift_key VARCHAR(10) NOT NULL,
+        shift_name VARCHAR(50) NOT NULL,
+        shift_time_range VARCHAR(50) NOT NULL,
+        float_amount INT DEFAULT 0,
+        revenue_amount INT DEFAULT 0,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    );
+`);
+// Xóa khóa trùng tên cũ (nếu có) và thêm cột shift_key
+try { await pool.query(`ALTER TABLE shift_reports DROP INDEX unique_shift;`); } catch(e) {}
+try { await pool.query(`ALTER TABLE shift_reports ADD COLUMN shift_key VARCHAR(10) AFTER report_date;`); } catch(e) {}
 
         try { await pool.query(`ALTER TABLE products MODIFY COLUMN stock DECIMAL(10,3) DEFAULT 0;`); } catch (e) {}
         try { await pool.query(`ALTER TABLE products ADD COLUMN price_2 INT DEFAULT 0, ADD COLUMN price_3 INT DEFAULT 0, ADD COLUMN price_4 INT DEFAULT 0;`); } catch (e) {}
@@ -351,37 +354,39 @@ app.delete('/api/expenses/:id', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// ================= API KẾT CA (BÀN GIAO) =================
+// 2. Cập nhật API GET /api/shifts
 app.get('/api/shifts', async (req, res) => {
-    const { date } = req.query; // date có dạng YYYY-MM-DD
+    const { date } = req.query;
     if (!date) return res.status(400).json({ error: 'Thiếu ngày' });
     try {
-        const [rows] = await pool.query('SELECT * FROM shift_reports WHERE report_date = ?', [date]);
+        const [rows] = await pool.query('SELECT * FROM shift_reports WHERE report_date = ? ORDER BY id ASC', [date]);
         res.json(rows);
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// 3. Cập nhật API POST /api/shifts
 app.post('/api/shifts', async (req, res) => {
     const { date, shifts } = req.body;
     const connection = await pool.getConnection();
     try {
         await connection.beginTransaction();
         for (const s of shifts) {
-            // Sửa lỗi ID: Dùng mã ca cố định (A, B, C) thay vì lấy Tên Ca dễ bị thay đổi
-            const id = `SH_${date}_${s.shift_key}`; 
+            const shiftKey = s.shift_key || 'A';
+            const id = `SH_${date}_${shiftKey}`; 
             await connection.query(
-                `INSERT INTO shift_reports (id, report_date, shift_name, shift_time_range, float_amount, revenue_amount) 
-                 VALUES (?, ?, ?, ?, ?, ?) 
+                `INSERT INTO shift_reports (id, report_date, shift_key, shift_name, shift_time_range, float_amount, revenue_amount) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?) 
                  ON DUPLICATE KEY UPDATE 
                  shift_name = VALUES(shift_name), shift_time_range = VALUES(shift_time_range), float_amount = VALUES(float_amount), revenue_amount = VALUES(revenue_amount)`,
-                [id, date, s.shift_name, s.shift_time_range, s.float_amount || 0, s.revenue_amount || 0]
+                [id, date, shiftKey, s.shift_name, s.shift_time_range, s.float_amount || 0, s.revenue_amount || 0]
             );
         }
         await connection.commit();
-        io.emit('shifts_updated'); // BẮN SỰ KIỆN: Báo cho màn hình nhân viên tải lại ngay lập tức
+        io.emit('shifts_updated');
         res.status(200).json({ message: "Đã đồng bộ báo cáo ca thành công" });
     } catch (error) {
         await connection.rollback();
+        console.error("❌ Lỗi lưu ca:", error);
         res.status(500).json({ error: error.message });
     } finally {
         connection.release();
